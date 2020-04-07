@@ -225,4 +225,29 @@ class CModel(object):
                 self._D2[i4, i1, i2] = C + C0
                 self._D2m[i4, i1, i2] = (self._D2[i4, i1, i2] != 0)
 
+    def diff(self, y):
+        """Time derivative from a given state
+
+        Compute the time derivative of the model for a given state vector.
+
+        Arguments:
+            y {np.ndarray} -- State vector
+
+        Returns:
+            [np.ndarray] -- Time derivative of y
+        """
+
+        dydt = self._D0.copy()
+        dydt += np.dot(self._D1, y)
+        dydt += np.sum(self._D2*y[None,:,None]*y[None,None,:], axis=(1,2))
+
+        return dydt
+
+    # p = 2
+    """Time derivative from a given state
     
+    Compute the time derivative of the model for a given state vector.
+
+    Arguments:
+        y {np.ndarray} -- State vector
+    """
