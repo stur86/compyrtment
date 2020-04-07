@@ -1,5 +1,6 @@
 import numpy as np
 from collections import OrderedDict
+from scipy.integrate import odeint
 
 
 class CModel(object):
@@ -230,23 +231,62 @@ class CModel(object):
 
         C = self._cdata['C']
         nC = len(C)
-        i1, i2, i3, i4 = self._cdata['i'].T + \
-            np.arange(0, nC)[None, :]*(self._N+1)
+        i1, i2, i3, i4 = self._cdata['i'].T
 
         yext = np.concatenate([y, [1]])
         dydCext = dydC.reshape(-1, self._N)
         if dydCext.shape[0] != nC:
             raise ValueError('Invalid size gradient passed to diff_gradient')
         dydCext = np.concatenate(
-            [dydCext, np.zeros((nC, 1))], axis=1).reshape(-1)
+            [dydCext, np.zeros((nC, 1))], axis=1)
         d2ydtdC = dydCext*0.
 
-        dcy = (yext[i1 % (self._N+1)]*yext[i2 % (self._N+1)] +
-               C*(dydCext[i1]*yext[i2 % (self._N+1)] +
-                  yext[i1 % (self._N+1)]*dydCext[i2]))
-        np.add.at(d2ydtdC, i3, -dcy)
-        np.add.at(d2ydtdC, i4,  dcy)
+        dcy1 = yext[i1]*yext[i2]
 
-        d2ydtdC = d2ydtdC.reshape((nC, -1))[:, :-1].reshape(-1)
+        np.add.at(d2ydtdC, (range(nC), i3), -dcy1)
+        np.add.at(d2ydtdC, (range(nC), i4),  dcy1)
+
+        iC = np.repeat(np.arange(nC), nC)
+        i1t = np.tile(i1, nC)
+        i2t = np.tile(i2, nC)
+        i3t = np.tile(i3, nC)
+        i4t = np.tile(i4, nC)
+
+        dcy2 = np.tile(C, nC)*(dydCext[iC, i1t]*yext[i2t] +
+                               dydCext[iC, i2t]*yext[i1t])
+
+        np.add.at(d2ydtdC, (iC, i3t), -dcy2)
+        np.add.at(d2ydtdC, (iC, i4t),  dcy2)
+
+        d2ydtdC = d2ydtdC[:, :-1].reshape(-1)
 
         return d2ydtdC
+
+    def integrate(self, t, y0):
+
+        def ode(y, t):
+            return self.diff(y)
+
+        return odeint(ode, y0, t)
+
+    def integrate_wgrad(self, t, y0):
+
+        def ode(y, t):
+            dydt = y*0.
+            dydt[:self._N] = self.diff(y[:self._N])
+            dydt[self._N:] = self.diff_gradient(y[:self._N], y[self._N:])
+
+            return dydt
+
+        nC = len(self._couplings)
+        y0 = np.concatenate([y0, np.zeros(nC*self._N)])
+
+        traj = odeint(ode, y0, t)
+
+        ans = {'y': traj[:, :self._N]}
+
+        for i, name in enumerate(self._couplings.keys()):
+            ans['dy/d({0})'.format(name)] = traj[:,
+                                                 (i+1)*self._N:(i+2)*self._N]
+
+        return ans
