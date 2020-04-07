@@ -17,3 +17,4 @@ setup(name='Compyrtment',
       ],
       python_requires='>=3.1.*'
       )
+
