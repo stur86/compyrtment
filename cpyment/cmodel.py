@@ -1,4 +1,5 @@
 import numpy as np
+from collections import OrderedDict
 
 
 class CModel(object):
@@ -50,6 +51,12 @@ class CModel(object):
         self._D2 = np.zeros((self._N, self._N, self._N))
         self._D2m = self._D2.copy().astype(bool)    # Mask
 
+        self._couplings = OrderedDict()
+        self._cdata = {
+            'C': np.zeros(0),
+            'i': np.zeros((0, 4)).astype(int)
+        }
+
     @property
     def size(self):
         return self._N
@@ -59,18 +66,10 @@ class CModel(object):
         return list(self._states)
 
     @property
-    def D0(self):
-        return self._D0.copy()
+    def couplings(self):
+        return OrderedDict(self._couplings)
 
-    @property
-    def D1(self):
-        return self._D1.copy()
-
-    @property
-    def D2(self):
-        return self._D2.copy()
-
-    def set_coupling_rate(self, descr, C=0, add=False):
+    def set_coupling_rate(self, descr, C=0, name=None):
         """Set a coupling between states
 
         Set a coupling between two states of the model. The coupling can be
@@ -127,9 +126,7 @@ class CModel(object):
 
         Keyword Arguments:
             C {number} -- Coupling constant (default: {0})
-            add {bool} -- If True, if any coupling with the same descriptor
-                          was already specified, add C to it instead of 
-                          replacing it (default: {False})
+            name {str} -- Name of coupling (default: {None})
         """
 
         # Parse the description
@@ -174,56 +171,27 @@ class CModel(object):
                              'definition'))
 
         # What kind of coupling is it?
-        if s1 is None and s2 is None:
-            # Constant
-            if s3 is not None:
-                i3 = self._states.index(s3)
-                C0 = 0 if not add else self._D0[i3]
-                self._D0[i3] = -C + C0
-                self._D0m[i3] = (self._D0[i3] != 0)
-            if s4 is not None:
-                i4 = self._states.index(s4)
-                C0 = 0 if not add else self._D0[i4]
-                self._D0[i4] = C + C0
-                self._D0m[i4] = (self._D0[i4] != 0)
-        elif s2 is None:
-            # Linear
-            i1 = self._states.index(s1)
 
-            if s3 is None and s4 is None:
-                # Default
-                s4 = s1
+        i1 = self._states.index(s1)
+        i2 = self._states.index(s2) if s2 is not None else self._N
+        i3 = self._states.index(s3) if s3 is not None else self._N
+        i4 = self._states.index(s4) if s4 is not None else self._N
 
-            if s3 is not None:
-                i3 = self._states.index(s3)
-                C0 = 0 if not add else self._D1[i3, i1]
-                self._D1[i3, i1] = -C + C0
-                self._D1m[i3, i1] = (self._D1[i3, i1] != 0)
-            if s4 is not None:
-                i4 = self._states.index(s4)
-                C0 = 0 if not add else self._D1[i4, i1]
-                self._D1[i4, i1] = C + C0
-                self._D1m[i4, i1] = (self._D1[i4, i1] != 0)
-        else:
-            # Quadratic
-            i1 = self._states.index(s1)
-            i2 = self._states.index(s2)
+        if i3+i4 == 2*self._N:
+            if i2 == self._N:
+                i4 = i1
+            else:
+                i3 = i1
+                i4 = i2
 
-            if s3 is None and s4 is None:
-                # Default
-                s3 = s1
-                s4 = s2
+        if name is None:
+            name = descr
 
-            if s3 is not None:
-                i3 = self._states.index(s3)
-                C0 = 0 if not add else self._D2[i3, i1, i2]
-                self._D2[i3, i1, i2] = -C + C0
-                self._D2m[i3, i1, i2] = (self._D2[i3, i1, i2] != 0)
-            if s4 is not None:
-                i4 = self._states.index(s4)
-                C0 = 0 if not add else self._D2[i4, i1, i2]
-                self._D2[i4, i1, i2] = C + C0
-                self._D2m[i4, i1, i2] = (self._D2[i4, i1, i2] != 0)
+        self._couplings[name] = (descr, C)
+
+        self._cdata['C'] = np.concatenate([self._cdata['C'], [C]])
+        self._cdata['i'] = np.concatenate(
+            [self._cdata['i'], [[i1, i2, i3, i4]]], axis=0)
 
     def diff(self, y):
         """Time derivative from a given state
@@ -237,17 +205,48 @@ class CModel(object):
             [np.ndarray] -- Time derivative of y
         """
 
-        dydt = self._D0.copy()
-        dydt += np.dot(self._D1, y)
-        dydt += np.sum(self._D2*y[None,:,None]*y[None,None,:], axis=(1,2))
+        yext = np.concatenate([y, [1]])
+        dydt = yext*0.
 
-        return dydt
+        C = self._cdata['C']
+        i1, i2, i3, i4 = self._cdata['i'].T
 
-    # p = 2
-    """Time derivative from a given state
-    
-    Compute the time derivative of the model for a given state vector.
+        cy = C*yext[i1]*yext[i2]
+        np.add.at(dydt, i3, -cy)
+        np.add.at(dydt, i4,  cy)
 
-    Arguments:
-        y {np.ndarray} -- State vector
-    """
+        return dydt[:-1]
+
+    def diff_gradient(self, y, dydC):
+        """Time derivative of the model's gradient
+
+        Time derivative of the gradient of the model's state with respect
+        to all its parameters.
+
+        Arguments:
+            y {np.ndarray} -- State vector
+            dydC {np.ndarray} -- Gradient of y w.r.t. coupling parameters
+        """
+
+        C = self._cdata['C']
+        nC = len(C)
+        i1, i2, i3, i4 = self._cdata['i'].T + \
+            np.arange(0, nC)[None, :]*(self._N+1)
+
+        yext = np.concatenate([y, [1]])
+        dydCext = dydC.reshape(-1, self._N)
+        if dydCext.shape[0] != nC:
+            raise ValueError('Invalid size gradient passed to diff_gradient')
+        dydCext = np.concatenate(
+            [dydCext, np.zeros((nC, 1))], axis=1).reshape(-1)
+        d2ydtdC = dydCext*0.
+
+        dcy = (yext[i1 % (self._N+1)]*yext[i2 % (self._N+1)] +
+               C*(dydCext[i1]*yext[i2 % (self._N+1)] +
+                  yext[i1 % (self._N+1)]*dydCext[i2]))
+        np.add.at(d2ydtdC, i3, -dcy)
+        np.add.at(d2ydtdC, i4,  dcy)
+
+        d2ydtdC = d2ydtdC.reshape((nC, -1))[:, :-1].reshape(-1)
+
+        return d2ydtdC
