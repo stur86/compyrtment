@@ -186,6 +186,8 @@ class CModel(object):
                 i4 = i2
 
         if name is None:
+            descr = "{0}*{1}:{2}=>{3}".format(*[s if s is not None else ''
+                                                for s in (s1, s2, s3, s4)])
             name = descr
 
         self._couplings[name] = (descr, C)
@@ -194,7 +196,7 @@ class CModel(object):
         self._cdata['i'] = np.concatenate(
             [self._cdata['i'], [[i1, i2, i3, i4]]], axis=0)
 
-    def diff(self, y):
+    def dy_dt(self, y):
         """Time derivative from a given state
 
         Compute the time derivative of the model for a given state vector.
@@ -218,7 +220,7 @@ class CModel(object):
 
         return dydt[:-1]
 
-    def diff_gradient(self, y, dydC):
+    def d2y_dtdC(self, y, dydC):
         """Time derivative of the model's gradient
 
         Time derivative of the gradient of the model's state with respect
@@ -236,7 +238,7 @@ class CModel(object):
         yext = np.concatenate([y, [1]])
         dydCext = dydC.reshape(-1, self._N)
         if dydCext.shape[0] != nC:
-            raise ValueError('Invalid size gradient passed to diff_gradient')
+            raise ValueError('Invalid size gradient passed to d2y_dtdC')
         dydCext = np.concatenate(
             [dydCext, np.zeros((nC, 1))], axis=1)
         d2ydtdC = dydCext*0.
@@ -262,31 +264,32 @@ class CModel(object):
 
         return d2ydtdC
 
-    def integrate(self, t, y0):
+    def integrate(self, t, y0, use_gradient=False):
 
-        def ode(y, t):
-            return self.diff(y)
+        if not use_gradient:
+            def ode(y, t):
+                return self.dydt(y)
 
-        return odeint(ode, y0, t)
+            return odeint(ode, y0, t)
 
-    def integrate_wgrad(self, t, y0):
+        else:
+            def ode(y, t):
+                dydt = y*0.
+                dydt[:self._N] = self.dydt(y[:self._N])
+                dydt[self._N:] = self.d2y_dtdC(y[:self._N], y[self._N:])
 
-        def ode(y, t):
-            dydt = y*0.
-            dydt[:self._N] = self.diff(y[:self._N])
-            dydt[self._N:] = self.diff_gradient(y[:self._N], y[self._N:])
+                return dydt
 
-            return dydt
+            nC = len(self._couplings)
+            y0 = np.concatenate([y0, np.zeros(nC*self._N)])
 
-        nC = len(self._couplings)
-        y0 = np.concatenate([y0, np.zeros(nC*self._N)])
+            traj = odeint(ode, y0, t)
 
-        traj = odeint(ode, y0, t)
+            ans = {'y': traj[:, :self._N]}
 
-        ans = {'y': traj[:, :self._N]}
+            for i, name in enumerate(self._couplings.keys()):
+                ans['dy/d({0})'.format(name)] = traj[:,
+                                                     (i+1)*self._N:(i+2) *
+                                                     self._N]
 
-        for i, name in enumerate(self._couplings.keys()):
-            ans['dy/d({0})'.format(name)] = traj[:,
-                                                 (i+1)*self._N:(i+2)*self._N]
-
-        return ans
+            return ans
