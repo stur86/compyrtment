@@ -449,6 +449,14 @@ class CModel(object):
         return sir
 
     @staticmethod
+    def make_SIS(beta=0.3, gamma=0.2):
+
+        sir = CModel('SI')
+        sir.set_coupling_rate('S*I', beta, name='beta')
+        sir.set_coupling_rate('I:I=>S', gamma, name='gamma')
+
+        return sir
+    @staticmethod
     def make_LotkaVolterra(alpha=2.0/3.0, beta=4.0/3.0, gamma=1, delta=1):
 
         lv = CModel('Pp')
