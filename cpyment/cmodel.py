@@ -1,6 +1,9 @@
 import numpy as np
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from scipy.integrate import odeint
+from scipy.optimize import minimize
+
+FitResult = namedtuple('FitResult', ['C', 'y0', 'R2', 'RSS', 'success'])
 
 
 class CModel(object):
@@ -264,6 +267,45 @@ class CModel(object):
 
         return d2ydtdC
 
+    def d2y_dtdy0(self, y, dydy0):
+        """Time derivative of the model's gradient w.r.t initial conditions
+
+        Time derivative of the gradient of the model's state with respect
+        to its initial conditions.
+
+        Arguments:
+            y {np.ndarray} -- State vector
+            dydy0 {np.ndarray} -- Gradient of y w.r.t. initial conditions
+        """
+
+        C = self._cdata['C']
+        nC = len(C)
+        i1, i2, i3, i4 = self._cdata['i'].T
+
+        yext = np.concatenate([y, [1]])
+        dydy0ext = dydy0.reshape(-1, self._N)
+        if dydy0ext.shape[0] != self._N:
+            raise ValueError('Invalid size gradient passed to d2y_dtdy0')
+        dydy0ext = np.concatenate(
+            [dydy0ext, np.zeros((self._N, 1))], axis=1)
+        d2ydtdy0 = dydy0ext*0.
+
+        iy0 = np.repeat(np.arange(self._N), nC)
+        i1t = np.tile(i1, self._N)
+        i2t = np.tile(i2, self._N)
+        i3t = np.tile(i3, self._N)
+        i4t = np.tile(i4, self._N)
+
+        dcy = np.tile(C, self._N)*(dydy0ext[iy0, i1t]*yext[i2t] +
+                                   dydy0ext[iy0, i2t]*yext[i1t])
+
+        np.add.at(d2ydtdy0, (iy0, i3t), -dcy)
+        np.add.at(d2ydtdy0, (iy0, i4t),  dcy)
+
+        d2ydtdy0 = d2ydtdy0[:, :-1].reshape(-1)
+
+        return d2ydtdy0
+
     def integrate(self, t, y0, use_gradient=False):
 
         if not use_gradient:
@@ -273,26 +315,129 @@ class CModel(object):
             return odeint(ode, y0, t)
 
         else:
+            N2 = self._N**2
+
             def ode(y, t):
                 dydt = y*0.
                 dydt[:self._N] = self.dy_dt(y[:self._N])
-                dydt[self._N:] = self.d2y_dtdC(y[:self._N], y[self._N:])
+                dydt[self._N:-N2] = self.d2y_dtdC(y[:self._N],
+                                                  y[self._N:-N2])
+                dydt[-N2:] = self.d2y_dtdy0(y[:self._N], y[-N2:])
 
                 return dydt
 
             nC = len(self._couplings)
-            y0 = np.concatenate([y0, np.zeros(nC*self._N)])
+            y0 = np.concatenate([y0, np.zeros(nC*self._N),
+                                 np.eye(3).reshape((-1,))])
 
             traj = odeint(ode, y0, t)
 
-            ans = {'y': traj[:, :self._N]}
+            ans = OrderedDict({'y': traj[:, :self._N]})
 
             for i, name in enumerate(self._couplings.keys()):
                 ans['dy/d({0})'.format(name)] = traj[:,
                                                      (i+1)*self._N:(i+2) *
                                                      self._N]
+            i0 = self._N*(nC+1)
+            for i, name in enumerate(self._states):
+                ans['dy/d({0}0)'.format(name)] = traj[:,
+                                                      i*self._N+i0:(i+1) *
+                                                      self._N+i0]
 
             return ans
+
+    def fit(self, data, steps=1000):
+
+        # Start by putting data in the right format
+        dN = len(data)
+        if dN == 0:
+            raise ValueError('No data passed to fit')
+
+        data_raw = data
+        data = []
+
+        for d in data_raw:
+            if type(d) is dict:
+                if 't' not in d:
+                    raise ValueError('Data in dictionary format must have a '
+                                     't label')
+                dv = np.zeros(self._N+1)
+                dv[0] = d['t']
+                for i, s in enumerate(self._states):
+                    dv[i+1] = d.get(s, np.nan)
+            else:
+                dv = np.array(d)
+
+            dv = np.where(dv == None, np.nan, dv)
+            data.append(dv)
+
+        data = np.array(data).astype(float)
+        data = data[np.argsort(data, axis=0)[:, 0]]  # Sorting by time
+
+        # Define the time range
+        t = np.linspace(data[0, 0], data[-1, 0], steps)
+        t = np.concatenate([t, data[:, 0]])
+        # Now sort, and identify the data points
+        tsort = np.argsort(t)
+        t = t[tsort]
+        data_i = np.where(tsort - steps >= 0)[0]
+
+        C = self._cdata['C']
+        nC = len(C)
+
+        # Cost function
+        def costf(x):
+            self._cdata['C'] = x[:nC]
+            y0 = x[nC:]
+            traj = self.integrate(t, y0, use_gradient=True)
+            traj = np.array(list(traj.values()))
+
+            # Gradient?
+            yref = traj[:, data_i, :]
+            err = (data[:, 1:]-yref[0])
+            err = np.where(np.isnan(data[:, 1:]), 0, err)
+            return np.sum(err**2)
+
+        # Gradient of cost function
+        def costfgrad(x):
+            self._cdata['C'] = x[:nC]
+            y0 = x[nC:]
+            traj = self.integrate(t, y0, use_gradient=True)
+            traj = np.array(list(traj.values()))
+
+            # Gradient?
+            yref = traj[:, data_i, :]
+            err = (yref[0]-data[:, 1:])
+            err = np.where(np.isnan(data[:, 1:]), 0, err)
+            return np.sum(2*err[None]*yref[1:, :, :], axis=(1, 2))
+
+        x0 = data[0, 1:]
+        x0 = np.where(np.isnan(x0), 0, x0)
+        x0 = np.concatenate([self._cdata['C'], x0])
+        sol = minimize(costf, x0, jac=costfgrad)
+
+        x = sol.x
+        self._cdata['C'] = x[:nC]
+        y0 = x[nC:]
+
+        traj = self.integrate(t, y0)
+
+        # R2?
+        yref = traj[data_i, :]
+        err = (yref-data[:, 1:])
+
+        dataN = np.sum(1.-np.isnan(data[:, 1:]), axis=0)
+        data = np.where(np.isnan(data), 0, data)
+        dataAvg = np.sum(data[:, 1:], axis=0)/dataN
+
+        SStot = np.sum((data[:, 1:]-dataAvg[None,:])**2, axis=0)
+        SSreg = np.sum((yref-dataAvg[None,:])**2, axis=0)
+
+        fitC = {c: x[i] for i, c in enumerate(self._couplings.keys())}
+
+        ans = FitResult(fitC, y0, SSreg/SStot, sol.fun, sol.success)
+
+        return ans
 
     @staticmethod
     def make_SIR(beta=0.3, gamma=0.2):
