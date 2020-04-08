@@ -268,14 +268,14 @@ class CModel(object):
 
         if not use_gradient:
             def ode(y, t):
-                return self.dydt(y)
+                return self.dy_dt(y)
 
             return odeint(ode, y0, t)
 
         else:
             def ode(y, t):
                 dydt = y*0.
-                dydt[:self._N] = self.dydt(y[:self._N])
+                dydt[:self._N] = self.dy_dt(y[:self._N])
                 dydt[self._N:] = self.d2y_dtdC(y[:self._N], y[self._N:])
 
                 return dydt
@@ -295,10 +295,21 @@ class CModel(object):
             return ans
 
     @staticmethod
-    def make_SIR_model(beta=0.3, gamma=0.2):
+    def make_SIR(beta=0.3, gamma=0.2):
 
         sir = CModel('SIR')
         sir.set_coupling_rate('S*I', beta, name='beta')
         sir.set_coupling_rate('I:I=>R', gamma, name='gamma')
 
         return sir
+
+    @staticmethod
+    def make_LotkaVolterra(alpha=2.0/3.0, beta=4.0/3.0, gamma=1, delta=1):
+
+        lv = CModel('Pp')
+        lv.set_coupling_rate('p:=>p', alpha, 'alpha')
+        lv.set_coupling_rate('p*P:p=>', beta, 'beta')
+        lv.set_coupling_rate('p*P:=>P', gamma, 'gamma')
+        lv.set_coupling_rate('P:P=>', delta, 'delta')
+
+        return lv
