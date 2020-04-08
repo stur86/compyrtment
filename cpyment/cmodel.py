@@ -293,3 +293,12 @@ class CModel(object):
                                                      self._N]
 
             return ans
+
+    @staticmethod
+    def make_SIR_model(beta=0.3, gamma=0.2):
+
+        sir = CModel('SIR')
+        sir.set_coupling_rate('S*I', beta, name='beta')
+        sir.set_coupling_rate('I:I=>R', gamma, name='gamma')
+
+        return sir
