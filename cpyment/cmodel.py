@@ -3,7 +3,7 @@ from collections import OrderedDict, namedtuple
 from scipy.integrate import odeint
 from scipy.optimize import minimize
 
-FitResult = namedtuple('FitResult', ['C', 'y0', 'R2', 'RSS', 'success'])
+FitResult = namedtuple('FitResult', ['C', 'y0', 'R2', 'RMSRE', 'success'])
 
 
 class CModel(object):
@@ -426,16 +426,20 @@ class CModel(object):
         yref = traj[data_i, :]
         err = (yref-data[:, 1:])
 
-        dataN = np.sum(1.-np.isnan(data[:, 1:]), axis=0)
+        dataMask = 1.-np.isnan(data[:, 1:])
+        dataN = np.sum(dataMask, axis=0)
         data = np.where(np.isnan(data), 0, data)
         dataAvg = np.sum(data[:, 1:], axis=0)/dataN
 
-        SStot = np.sum((data[:, 1:]-dataAvg[None,:])**2, axis=0)
-        SSreg = np.sum((yref-dataAvg[None,:])**2, axis=0)
+        SStot = np.sum((data[:, 1:]-dataAvg[None, :])**2, axis=0)
+        SSreg = np.sum((yref-dataAvg[None, :])**2, axis=0)
 
         fitC = {c: x[i] for i, c in enumerate(self._couplings.keys())}
 
-        ans = FitResult(fitC, y0, SSreg/SStot, sol.fun, sol.success)
+        RMSRE = (np.sum(((yref*dataMask-data[:, 1:])/yref)**2)
+                 / np.sum(dataN))**0.5
+
+        ans = FitResult(fitC, y0, SSreg/SStot, RMSRE, sol.success)
 
         return ans
 
@@ -456,6 +460,7 @@ class CModel(object):
         sir.set_coupling_rate('I:I=>S', gamma, name='gamma')
 
         return sir
+
     @staticmethod
     def make_LotkaVolterra(alpha=2.0/3.0, beta=4.0/3.0, gamma=1, delta=1):
 
