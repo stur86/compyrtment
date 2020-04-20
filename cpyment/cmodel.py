@@ -1,9 +1,49 @@
 import numpy as np
+import warnings
 from collections import OrderedDict, namedtuple
 from scipy.integrate import odeint
 from scipy.optimize import minimize
+from numba import jit
 
 FitResult = namedtuple('FitResult', ['C', 'y0', 'R2', 'RMSRE', 'success'])
+
+
+@jit(nopython=True)
+def _gillespie(tmax, y0, C, i1, i2, i3, i4, sN, tblock=100):
+    nC = len(C)
+    indsC = range(nC)
+
+    traj = np.zeros((sN, tblock, len(y0)+1))
+
+    for i in range(sN):
+        y = y0.copy()
+        yext = np.concatenate((y, np.ones((1,))))
+        t_s = 0
+        t_i = 0
+        traj[i, 0, 1:] = y
+        while t_s < tmax:
+            w = C*yext[i1]*yext[i2]
+            Wtot = np.sum(w)
+            if Wtot == 0:
+                # Then it's finished
+                break
+            dt = -np.log(np.random.random())/Wtot
+            t_s += dt
+            t_i += 1
+            C_i = np.where(np.random.random() < np.cumsum(w)/Wtot)[0][0]
+            yext[i3[C_i]] -= 1.
+            yext[i4[C_i]] += 1.
+            yext[-1] = 1.
+
+            if t_i >= traj.shape[1]:
+                traj = np.concatenate((traj,
+                                       np.zeros((sN, tblock, len(y0)+1))),
+                                      axis=1)
+
+            traj[i,t_i,0] = t_s
+            traj[i,t_i,1:] = yext[:-1]
+
+    return traj
 
 
 class CModel(object):
@@ -345,6 +385,22 @@ class CModel(object):
                                                       self._N+i0]
 
             return ans
+
+    def gillespie(self, tmax, y0, samples=1000):
+
+        # Grab coupling data
+        C = self._cdata['C']
+        i1, i2, i3, i4 = self._cdata['i'].T
+
+        traj = _gillespie(tmax, y0, C, i1, i2, i3, i4, samples)
+        tmax_i = np.argmax(traj[:,:,0], axis=1)
+        # Fill in the rest
+        for i, tmi in enumerate(tmax_i):
+            traj[i, tmi:, 0] = tmax
+            traj[i, tmi:, 1:] = traj[i, tmi, None, 1:]
+
+
+        return traj
 
     def fit(self, data, steps=1000):
 
