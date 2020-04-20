@@ -3,7 +3,16 @@ import warnings
 from collections import OrderedDict, namedtuple
 from scipy.integrate import odeint
 from scipy.optimize import minimize
-from numba import jit
+try:
+    from numba import jit
+except ImportError:
+    warnings.warn('Numba not found - Gillespie algorithm calculations'
+                  ' may be inefficient')
+
+    def jit(*args, **kwargs):
+        def fakedec(f):
+            return f
+        return fakedec
 
 FitResult = namedtuple('FitResult', ['C', 'y0', 'R2', 'RMSRE', 'success'])
 
@@ -40,8 +49,8 @@ def _gillespie(tmax, y0, C, i1, i2, i3, i4, sN, tblock=100):
                                        np.zeros((sN, tblock, len(y0)+1))),
                                       axis=1)
 
-            traj[i,t_i,0] = t_s
-            traj[i,t_i,1:] = yext[:-1]
+            traj[i, t_i, 0] = t_s
+            traj[i, t_i, 1:] = yext[:-1]
 
     return traj
 
@@ -393,12 +402,11 @@ class CModel(object):
         i1, i2, i3, i4 = self._cdata['i'].T
 
         traj = _gillespie(tmax, y0, C, i1, i2, i3, i4, samples)
-        tmax_i = np.argmax(traj[:,:,0], axis=1)
+        tmax_i = np.argmax(traj[:, :, 0], axis=1)
         # Fill in the rest
         for i, tmi in enumerate(tmax_i):
             traj[i, tmi:, 0] = tmax
             traj[i, tmi:, 1:] = traj[i, tmi, None, 1:]
-
 
         return traj
 
