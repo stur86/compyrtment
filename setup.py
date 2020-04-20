@@ -23,7 +23,6 @@ setup(name='Compyrtment',
       url='https://github.com/stur86/compyrtment',
       author='Simone Sturniolo',
       author_email='simonesturniolo@gmail.com',
-      url='https://github.com/stur86/compyrtment',
       keywords=['differential equations', 'compartment models', 'epidemiology',
                 'ecology', 'reactions', 'gillespie'],
       classifiers=[
