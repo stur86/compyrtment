@@ -356,12 +356,37 @@ class CModel(object):
         return d2ydtdy0
 
     def integrate(self, t, y0, use_gradient=False):
+        """Integrate the ODEs of the model
+
+        Carry out an integration of the system of ODEs representing
+        the model using the scipy.integrate.odeint method.
+
+        Arguments:
+            t {np.ndarray} -- Array of times for the integration
+            y0 {np.ndarray} -- Starting state
+
+        Keyword Arguments:
+            use_gradient {bool} -- If True, also compute the
+            gradient of the curves w.r.t parameters and initial conditions
+            (default: {False})
+
+        Returns:
+            OrderedDict -- Dictionary of the computed trajectories, with the
+            following keys:
+                - y: trajectory of the main populations
+                - dy/d([coupling name]): derivatives wrt coupling constants
+                - dy/d([state name]0): derivatives wrt starting conditions
+
+            The latter two are present only if use_gradient = True.
+        """
 
         if not use_gradient:
             def ode(y, t):
                 return self.dy_dt(y)
 
-            return odeint(ode, y0, t)
+            traj = odeint(ode, y0, t)
+
+            ans = OrderedDict({'y': traj})
 
         else:
             N2 = self._N**2
@@ -393,9 +418,28 @@ class CModel(object):
                                                       i*self._N+i0:(i+1) *
                                                       self._N+i0]
 
-            return ans
+        return ans
 
     def gillespie(self, tmax, y0, samples=1000):
+        """Perform a Gillespie stochastic simulation
+
+        Simulate the system stochastically with Gillespie's algorithm.
+
+        Arguments:
+            tmax {float} -- Maximum time for the simulation
+            y0 {np.ndarray} -- Starting state
+
+        Keyword Arguments:
+            samples {number} -- Number of trajectories to sample 
+                                (default: {1000})
+
+        Returns:
+            OrderedDict -- Dictionary of the computed trajectories, with the
+            following keys:
+                - t: times at which the state is computed, for each 
+                     trajectory
+                - y: trajectories of the main populations
+        """
 
         # Grab coupling data
         C = self._cdata['C']
@@ -408,9 +452,43 @@ class CModel(object):
             traj[i, tmi:, 0] = tmax
             traj[i, tmi:, 1:] = traj[i, tmi, None, 1:]
 
-        return traj
+        ans = OrderedDict({'t': traj[:, :, 0]})
+        ans['y'] = traj[:, :, 1:]
+
+        return ans
 
     def fit(self, data, steps=1000):
+        """Fit the model to data
+
+        Fit the model's parameters to a given data set, minimising the
+        Root Sum Square of the error. This modifies the couplings of the model
+        instance, setting them to the fitted values.
+
+        Arguments:
+            data {list} -- A list of the data points available. Can be a list
+            of dictionaries or arrays. If it's dictionaries, they must all 
+            have a member `t' (for the time of the point) and then can have
+            members with the names of various compartments of the model. If
+            it's arrays, then they must have N+1 elements for N compartments;
+            the first is time, and the latter are the compartments, in order.
+            Missing values can be set to NaN.
+
+        Keyword Arguments:
+            steps {number} -- Number of integration steps to split the time
+            interval into (default: {1000})
+
+        Returns:
+            FitResult - Named tuple containing the following members:
+                - C:  fitted constants for each coupling
+                - y0: fitted optimal starting state
+                - R2: array of R squared values for goodness of fit, one
+                for each curve (can be R2 > 1 due to this)
+                - RMSRE: Root Mean Square Relative Error, total
+                - success: if True, the fitting has converged to a final value.
+
+        Raises:
+            ValueError -- Thrown if data is empty or invalid in format.
+        """
 
         # Start by putting data in the right format
         dN = len(data)
@@ -484,7 +562,7 @@ class CModel(object):
         self._cdata['C'] = x[:nC]
         y0 = x[nC:]
 
-        traj = self.integrate(t, y0)
+        traj = self.integrate(t, y0)['y']
 
         # R2?
         yref = traj[data_i, :]
@@ -509,6 +587,17 @@ class CModel(object):
 
     @staticmethod
     def make_SIR(beta=0.3, gamma=0.2):
+        """Make a SIR model
+        
+        Constructor for an epidemic SIR model
+        
+        Keyword Arguments:
+            beta {number} -- Infection rate (default: {0.3})
+            gamma {number} -- Recovery rate (default: {0.2})
+        
+        Returns:
+            CModel -- A CModel object describing a SIR model
+        """
 
         sir = CModel('SIR')
         sir.set_coupling_rate('S*I', beta, name='beta')
@@ -518,6 +607,18 @@ class CModel(object):
 
     @staticmethod
     def make_SIS(beta=0.3, gamma=0.2):
+        """Make a SIS model
+        
+        Constructor for an epidemic SIS model
+        
+        Keyword Arguments:
+            beta {number} -- Infection rate (default: {0.3})
+            gamma {number} -- Recovery rate (default: {0.2})
+        
+        Returns:
+            CModel -- A CModel object describing a SIS model
+        """
+
 
         sir = CModel('SI')
         sir.set_coupling_rate('S*I', beta, name='beta')
@@ -527,6 +628,20 @@ class CModel(object):
 
     @staticmethod
     def make_LotkaVolterra(alpha=2.0/3.0, beta=4.0/3.0, gamma=1, delta=1):
+        """Make a Lotka-Volterra model
+        
+        Constructor for a Lotka-Volterra model of predation
+        
+        Keyword Arguments:
+            alpha {number} -- Rate of prey growth (default: {0.666})
+            beta {number} -- Rate of prey killing (default: {1.333})
+            gamma {number} -- Rate of predator eating (default: {1})
+            delta {number} -- Rate of predator death (default: {1})
+        
+        Returns:
+            CModel -- A CModel object describing a Lotka-Volterra model
+        """
+
 
         lv = CModel('Pp')
         lv.set_coupling_rate('p:=>p', alpha, 'alpha')
