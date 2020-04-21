@@ -242,6 +242,10 @@ class CModel(object):
                                                 for s in (s1, s2, s3, s4)])
             name = descr
 
+        if name in self._couplings:
+            raise ValueError('Coupling {0} already exists '
+                             'for model'.format(name))
+
         self._couplings[name] = (descr, C)
 
         self._cdata['C'] = np.concatenate([self._cdata['C'], [C]])
@@ -588,13 +592,13 @@ class CModel(object):
     @staticmethod
     def make_SIR(beta=0.3, gamma=0.2):
         """Make a SIR model
-        
+
         Constructor for an epidemic SIR model
-        
+
         Keyword Arguments:
             beta {number} -- Infection rate (default: {0.3})
             gamma {number} -- Recovery rate (default: {0.2})
-        
+
         Returns:
             CModel -- A CModel object describing a SIR model
         """
@@ -608,17 +612,16 @@ class CModel(object):
     @staticmethod
     def make_SIS(beta=0.3, gamma=0.2):
         """Make a SIS model
-        
+
         Constructor for an epidemic SIS model
-        
+
         Keyword Arguments:
             beta {number} -- Infection rate (default: {0.3})
             gamma {number} -- Recovery rate (default: {0.2})
-        
+
         Returns:
             CModel -- A CModel object describing a SIS model
         """
-
 
         sir = CModel('SI')
         sir.set_coupling_rate('S*I', beta, name='beta')
@@ -629,19 +632,18 @@ class CModel(object):
     @staticmethod
     def make_LotkaVolterra(alpha=2.0/3.0, beta=4.0/3.0, gamma=1, delta=1):
         """Make a Lotka-Volterra model
-        
+
         Constructor for a Lotka-Volterra model of predation
-        
+
         Keyword Arguments:
             alpha {number} -- Rate of prey growth (default: {0.666})
             beta {number} -- Rate of prey killing (default: {1.333})
             gamma {number} -- Rate of predator eating (default: {1})
             delta {number} -- Rate of predator death (default: {1})
-        
+
         Returns:
             CModel -- A CModel object describing a Lotka-Volterra model
         """
-
 
         lv = CModel('Pp')
         lv.set_coupling_rate('p:=>p', alpha, 'alpha')
