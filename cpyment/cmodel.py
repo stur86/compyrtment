@@ -402,7 +402,7 @@ class CModel(object):
 
             nC = len(self._couplings)
             y0 = np.concatenate([y0, np.zeros(nC*self._N),
-                                 np.eye(3).reshape((-1,))])
+                                 np.eye(self._N).reshape((-1,))])
 
             traj = odeint(ode, y0, t)
 
