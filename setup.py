@@ -53,7 +53,7 @@ setup(name='Compyrtment',
       install_requires=[
           'numpy',
           'scipy',
-          'ase'
+          'numba'
       ],
       python_requires='>=3.1.*'
       )

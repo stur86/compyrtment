@@ -3,18 +3,9 @@ import warnings
 from collections import OrderedDict, namedtuple
 from scipy.integrate import odeint
 from scipy.optimize import minimize
-try:
-    from numba import jit
-except ImportError:
-    warnings.warn('Numba not found - Gillespie algorithm calculations'
-                  ' may be inefficient')
+from numba import jit
 
-    def jit(*args, **kwargs):
-        def fakedec(f):
-            return f
-        return fakedec
-
-FitResult = namedtuple('FitResult', ['C', 'y0', 'R2', 'RMSRE', 'success'])
+FitResult = namedtuple('FitResult', ['C', 'y0', 'R2', 'MRPD', 'success'])
 
 
 @jit(nopython=True)
@@ -129,16 +120,16 @@ class CModel(object):
         of three types:
 
         * CONSTANT
-            A constant rate of growth for a certain state of the 
+            A constant rate of growth for a certain state of the
             model.
         * LINEAR
             A rate of growth that is linearly proportional to the population
             of the same or another state.
         * QUADRATIC
-            A rate of growth that is proportional to the product of the 
+            A rate of growth that is proportional to the product of the
             populations of two states.
 
-        The coupling is defined by a descriptor string. This can have up to 
+        The coupling is defined by a descriptor string. This can have up to
         four states:
 
         "S1*S2:S3=>S4"
@@ -160,19 +151,19 @@ class CModel(object):
 
         "S1:=>S4"
 
-        results in 
+        results in
 
         dS4/dt = C*S1
 
         "S3=>S4"
 
-        results in 
+        results in
 
         dS3/dt = -C
 
         dS4/dt = C
 
-        and so on. 
+        and so on.
 
         Arguments:
             descr {str} -- Descriptor string for the coupling.
@@ -251,6 +242,26 @@ class CModel(object):
         self._cdata['C'] = np.concatenate([self._cdata['C'], [C]])
         self._cdata['i'] = np.concatenate(
             [self._cdata['i'], [[i1, i2, i3, i4]]], axis=0)
+
+    def edit_coupling_rate(self, name, C):
+        """Change the coupling rate for an existing coupling
+
+        Change the coupling rate for an existing coupling
+
+        Arguments:
+            name {str} -- Name of the coupling
+            C {number} -- New value
+        """
+
+        names = list(self._couplings.keys())
+        try:
+            i = names.index(name)
+        except ValueError:
+            raise ValueError('No coupling with name {0} exists'.format(name))
+
+        descr, _ = self._couplings[name]
+        self._couplings[name] = (descr, C)
+        self._cdata['C'][i] = C
 
     def dy_dt(self, y):
         """Time derivative from a given state
@@ -434,13 +445,13 @@ class CModel(object):
             y0 {np.ndarray} -- Starting state
 
         Keyword Arguments:
-            samples {number} -- Number of trajectories to sample 
+            samples {number} -- Number of trajectories to sample
                                 (default: {1000})
 
         Returns:
             OrderedDict -- Dictionary of the computed trajectories, with the
             following keys:
-                - t: times at which the state is computed, for each 
+                - t: times at which the state is computed, for each
                      trajectory
                 - y: trajectories of the main populations
         """
@@ -461,7 +472,7 @@ class CModel(object):
 
         return ans
 
-    def fit(self, data, steps=1000):
+    def fit(self, data, steps=1000, constraints={}):
         """Fit the model to data
 
         Fit the model's parameters to a given data set, minimising the
@@ -470,7 +481,7 @@ class CModel(object):
 
         Arguments:
             data {list} -- A list of the data points available. Can be a list
-            of dictionaries or arrays. If it's dictionaries, they must all 
+            of dictionaries or arrays. If it's dictionaries, they must all
             have a member `t' (for the time of the point) and then can have
             members with the names of various compartments of the model. If
             it's arrays, then they must have N+1 elements for N compartments;
@@ -480,6 +491,11 @@ class CModel(object):
         Keyword Arguments:
             steps {number} -- Number of integration steps to split the time
             interval into (default: {1000})
+            constraints {dict} -- Dictionary whose keys must be valid names of
+            coupling constants or X0 with X a valid name of a state, and whose
+            values must be numbers.
+            These constants, or the initial conditions for those states,
+            will be fixed to those values and not allowed to change.
 
         Returns:
             FitResult - Named tuple containing the following members:
@@ -487,7 +503,7 @@ class CModel(object):
                 - y0: fitted optimal starting state
                 - R2: array of R squared values for goodness of fit, one
                 for each curve (can be R2 > 1 due to this)
-                - RMSRE: Root Mean Square Relative Error, total
+                - MRPD: Mean Relative Percent Difference, total
                 - success: if True, the fitting has converged to a final value.
 
         Raises:
@@ -531,7 +547,20 @@ class CModel(object):
         C = self._cdata['C']
         nC = len(C)
 
+        # Get constraints mask
+        mask = np.ones(nC+self._N)
+        y0 = np.ones(self._N)*np.nan
+        for i, name in enumerate(self._couplings.keys()):
+            if name in constraints:
+                self.edit_coupling_rate(name, constraints[name])
+                mask[i] = 0
+        for i, name in enumerate(self._states):
+            if name + '0' in constraints:
+                y0[i] = constraints[name + '0']
+                mask[nC+i] = 0
+
         # Cost function
+
         def costf(x):
             self._cdata['C'] = x[:nC]
             y0 = x[nC:]
@@ -555,15 +584,18 @@ class CModel(object):
             yref = traj[:, data_i, :]
             err = (yref[0]-data[:, 1:])
             err = np.where(np.isnan(data[:, 1:]), 0, err)
-            return np.sum(2*err[None]*yref[1:, :, :], axis=(1, 2))
+            return np.sum(2*err[None]*yref[1:, :, :]*mask[:, None, None],
+                          axis=(1, 2))
 
         x0 = data[0, 1:]
         x0 = np.where(np.isnan(x0), 0, x0)
+        x0 = np.where(np.isnan(y0), x0, y0)         # Apply constraints
         x0 = np.concatenate([self._cdata['C'], x0])
         sol = minimize(costf, x0, jac=costfgrad)
 
         x = sol.x
-        self._cdata['C'] = x[:nC]
+        for i, name in enumerate(self._couplings.keys()):
+            self.edit_coupling_rate(name, x[i])
         y0 = x[nC:]
 
         traj = self.integrate(t, y0)['y']
@@ -582,10 +614,11 @@ class CModel(object):
 
         fitC = {c: x[i] for i, c in enumerate(self._couplings.keys())}
 
-        RMSRE = (np.sum(((yref*dataMask-data[:, 1:])/yref)**2)
-                 / np.sum(dataN))**0.5
+        MRPD = (np.sum(np.abs(2*(yref*dataMask-data[:, 1:]) /
+                              (np.abs(yref*dataMask)+np.abs(data[:, 1:]))))
+                / np.sum(dataN))
 
-        ans = FitResult(fitC, y0, SSreg/SStot, RMSRE, sol.success)
+        ans = FitResult(fitC, y0, SSreg/SStot, MRPD, sol.success)
 
         return ans
 
