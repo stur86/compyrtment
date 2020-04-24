@@ -652,3 +652,9 @@ class CModel(object):
         lv.set_coupling_rate('P:P=>', delta, 'delta')
 
         return lv
+
+    def pprint(self):
+        for label, coupling in self._couplings.items():
+            notation, rate = coupling
+            factors, transition = notation.split(':')
+            print("%s\t@ %s*%s\t# %s" % (transition, factors, rate, label))
