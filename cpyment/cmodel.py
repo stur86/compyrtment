@@ -1,7 +1,7 @@
 import numpy as np
 import warnings
 from collections import OrderedDict, namedtuple
-from scipy.integrate import odeint
+from scipy.integrate import odeint, solve_ivp
 from scipy.optimize import minimize
 from numba import jit
 
@@ -370,11 +370,11 @@ class CModel(object):
 
         return d2ydtdy0
 
-    def integrate(self, t, y0, use_gradient=False):
+    def integrate(self, t, y0, use_gradient=False, events=None):
         """Integrate the ODEs of the model
 
         Carry out an integration of the system of ODEs representing
-        the model using the scipy.integrate.odeint method.
+        the model using the scipy.integrate.solve_ivp method.
 
         Arguments:
             t {np.ndarray} -- Array of times for the integration
@@ -384,6 +384,11 @@ class CModel(object):
             use_gradient {bool} -- If True, also compute the
             gradient of the curves w.r.t parameters and initial conditions
             (default: {False})
+            events {[fun(t, y)]} -- List of functions of t, y (where y is the
+            array of states, or states + gradients if use_gradient is True)
+            at which special events happen and are recorded, or can terminate
+            integration. See scipy's documentation for solve_ivp for further
+            details (default: {None})
 
         Returns:
             OrderedDict -- Dictionary of the computed trajectories, with the
@@ -391,22 +396,28 @@ class CModel(object):
                 - y: trajectory of the main populations
                 - dy/d([coupling name]): derivatives wrt coupling constants
                 - dy/d([state name]0): derivatives wrt starting conditions
+                - t: times of integration. Usually the entire model.t, but can
+                be less in presence of terminating events.
+                - t_events: times of events.
 
-            The latter two are present only if use_gradient = True.
+            The derivatives are present only if use_gradient = True. The event
+            times are present only if events is not None.
         """
 
         if not use_gradient:
-            def ode(y, t):
+            def ode(t, y):
                 return self.dy_dt(y)
 
-            traj = odeint(ode, y0, t)
+            sol = solve_ivp(ode, [t[0], t[-1]], y0, t_eval=t,
+                            events=events)
+            traj = sol.y.T
 
             ans = OrderedDict({'y': traj})
 
         else:
             N2 = self._N**2
 
-            def ode(y, t):
+            def ode(t, y):
                 dydt = y*0.
                 dydt[:self._N] = self.dy_dt(y[:self._N])
                 dydt[self._N:-N2] = self.d2y_dtdC(y[:self._N],
@@ -419,7 +430,9 @@ class CModel(object):
             y0 = np.concatenate([y0, np.zeros(nC*self._N),
                                  np.eye(self._N).reshape((-1,))])
 
-            traj = odeint(ode, y0, t)
+            sol = solve_ivp(ode, [t[0], t[-1]], y0, t_eval=t,
+                            events=events)
+            traj = sol.y.T
 
             ans = OrderedDict({'y': traj[:, :self._N]})
 
@@ -432,6 +445,10 @@ class CModel(object):
                 ans['dy/d({0}0)'.format(name)] = traj[:,
                                                       i*self._N+i0:(i+1) *
                                                       self._N+i0]
+
+        ans['t'] = sol.t
+        if events is not None:
+            ans['t_events'] = sol.t_events
 
         return ans
 
@@ -542,6 +559,8 @@ class CModel(object):
         # Now sort, and identify the data points
         tsort = np.argsort(t)
         t = t[tsort]
+        # Make it unique
+        t, uniq_inv = np.unique(t, return_inverse=True)
         data_i = np.where(tsort - steps >= 0)[0]
 
         C = self._cdata['C']
@@ -565,7 +584,9 @@ class CModel(object):
             self._cdata['C'] = x[:nC]
             y0 = x[nC:]
             traj = self.integrate(t, y0, use_gradient=True)
-            traj = np.array(list(traj.values()))
+            traj = np.array(list(traj.values())[:-1])
+            # Rebuild original array
+            traj = traj[:, uniq_inv, :]
 
             # Gradient?
             yref = traj[:, data_i, :]
@@ -578,7 +599,9 @@ class CModel(object):
             self._cdata['C'] = x[:nC]
             y0 = x[nC:]
             traj = self.integrate(t, y0, use_gradient=True)
-            traj = np.array(list(traj.values()))
+            traj = np.array(list(traj.values())[:-1])
+            # Rebuild original array
+            traj = traj[:, uniq_inv, :]
 
             # Gradient?
             yref = traj[:, data_i, :]
@@ -599,6 +622,7 @@ class CModel(object):
         y0 = x[nC:]
 
         traj = self.integrate(t, y0)['y']
+        traj = traj[uniq_inv, :]
 
         # R2?
         yref = traj[data_i, :]
