@@ -592,7 +592,8 @@ class CModel(object):
             yref = traj[:, data_i, :]
             err = (data[:, 1:]-yref[0])
             err = np.where(np.isnan(data[:, 1:]), 0, err)
-            return np.sum(err**2)
+            cost = np.sum(err**2)
+            return cost
 
         # Gradient of cost function
         def costfgrad(x):
@@ -638,10 +639,12 @@ class CModel(object):
 
         fitC = {c: x[i] for i, c in enumerate(self._couplings.keys())}
 
-        MRPD = (np.sum(np.abs(2*(yref*dataMask-data[:, 1:]) /
-                              (np.abs(yref*dataMask)+np.abs(data[:, 1:]))))
-                / np.sum(dataN))
+        avgAbs = (np.abs(yref*dataMask)+np.abs(data[:, 1:]))/2.0
+        avgAbs = np.where(avgAbs > 0, avgAbs, np.inf)
 
+        MRPD = (np.sum(np.abs(yref*dataMask-data[:, 1:])/ avgAbs)
+                / np.sum(dataN))
+        
         ans = FitResult(fitC, y0, SSreg/SStot, MRPD, sol.success)
 
         return ans
