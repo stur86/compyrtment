@@ -370,7 +370,7 @@ class CModel(object):
 
         return d2ydtdy0
 
-    def integrate(self, t, y0, use_gradient=False, events=None):
+    def integrate(self, t, y0, use_gradient=False, events=None, max_step=np.inf):
         """Integrate the ODEs of the model
 
         Carry out an integration of the system of ODEs representing
@@ -409,7 +409,7 @@ class CModel(object):
                 return self.dy_dt(y)
 
             sol = solve_ivp(ode, [t[0], t[-1]], y0, t_eval=t,
-                            events=events)
+                            events=events, max_step=max_step)
             traj = sol.y.T
 
             ans = OrderedDict({'y': traj})
@@ -431,7 +431,7 @@ class CModel(object):
                                  np.eye(self._N).reshape((-1,))])
 
             sol = solve_ivp(ode, [t[0], t[-1]], y0, t_eval=t,
-                            events=events)
+                            events=events, max_step=np.inf)
             traj = sol.y.T
 
             ans = OrderedDict({'y': traj[:, :self._N]})
