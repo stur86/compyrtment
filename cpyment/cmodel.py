@@ -431,7 +431,7 @@ class CModel(object):
                                  np.eye(self._N).reshape((-1,))])
 
             sol = solve_ivp(ode, [t[0], t[-1]], y0, t_eval=t,
-                            events=events, max_step=np.inf)
+                            events=events, max_step=max_step)
             traj = sol.y.T
 
             ans = OrderedDict({'y': traj[:, :self._N]})
