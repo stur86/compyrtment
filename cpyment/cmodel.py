@@ -370,7 +370,7 @@ class CModel(object):
 
         return d2ydtdy0
 
-    def integrate(self, t, y0, use_gradient=False, events=None):
+    def integrate(self, t, y0, use_gradient=False, events=None, ivpargs={}):
         """Integrate the ODEs of the model
 
         Carry out an integration of the system of ODEs representing
@@ -389,6 +389,8 @@ class CModel(object):
             at which special events happen and are recorded, or can terminate
             integration. See scipy's documentation for solve_ivp for further
             details (default: {None})
+            ivpargs {dict} -- Any other arguments that should be passed
+            directly to scipy's solve_ivp method (default: {})
 
         Returns:
             OrderedDict -- Dictionary of the computed trajectories, with the
@@ -409,7 +411,7 @@ class CModel(object):
                 return self.dy_dt(y)
 
             sol = solve_ivp(ode, [t[0], t[-1]], y0, t_eval=t,
-                            events=events)
+                            events=events, **ivpargs)
             traj = sol.y.T
 
             ans = OrderedDict({'y': traj})
@@ -431,7 +433,7 @@ class CModel(object):
                                  np.eye(self._N).reshape((-1,))])
 
             sol = solve_ivp(ode, [t[0], t[-1]], y0, t_eval=t,
-                            events=events)
+                            events=events, **ivpargs)
             traj = sol.y.T
 
             ans = OrderedDict({'y': traj[:, :self._N]})
