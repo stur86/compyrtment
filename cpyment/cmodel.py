@@ -216,7 +216,7 @@ class CModel(object):
 
         # What kind of coupling is it?
 
-        i1 = self._states.index(s1)
+        i1 = self._states.index(s1) if s1 is not None else self._N
         i2 = self._states.index(s2) if s2 is not None else self._N
         i3 = self._states.index(s3) if s3 is not None else self._N
         i4 = self._states.index(s4) if s4 is not None else self._N

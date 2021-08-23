@@ -17,7 +17,7 @@ and SEIR epidemic models or the Lotka-Volterra model of predation. It supports:
 """
 
 setup(name='Compyrtment',
-      version='0.5.6',
+      version='0.5.7',
       description='A simple Python library for compartment models',
       long_description=long_description,
       url='https://github.com/stur86/compyrtment',
@@ -55,5 +55,5 @@ setup(name='Compyrtment',
           'scipy',
           'numba'
       ],
-      python_requires='>=3.1.*'
+      python_requires='>=3.6.*'
       )
